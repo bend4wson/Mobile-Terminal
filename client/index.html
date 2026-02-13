@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1e1e1e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Terminal Mobile</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/xterm.css">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+</head>
+<body>
+  <div class="app">
+    <div class="tab-bar" id="tab-bar">
+      <div class="tab-new" id="new-tab-btn" title="New terminal">+</div>
+    </div>
+
+    <div class="status-bar" id="status-bar">Disconnected — reconnecting...</div>
+
+    <div class="terminal-container" id="terminal-container"></div>
+
+    <div class="shortcut-bar">
+      <div class="shortcut-row">
+        <button class="shortcut-btn" data-input="y">y</button>
+        <button class="shortcut-btn" data-input="n">n</button>
+        <button class="shortcut-btn" data-input="\x03">C-c</button>
+        <button class="shortcut-btn" data-input="\x04">C-d</button>
+        <button class="shortcut-btn" data-input="\t">Tab</button>
+      </div>
+      <div class="shortcut-row">
+        <button class="shortcut-btn" data-input="\x1b[A">&uarr;</button>
+        <button class="shortcut-btn" data-input="\x1b[B">&darr;</button>
+        <button class="shortcut-btn" data-input="\x1b[D">&larr;</button>
+        <button class="shortcut-btn" data-input="\x1b[C">&rarr;</button>
+        <button class="shortcut-btn" data-input="\x1b">Esc</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/xterm.js"></script>
+  <script src="/js/xterm-addon-fit.js"></script>
+  <script src="/js/xterm-addon-web-links.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/terminal.js"></script>
+  <script src="/js/tabs.js"></script>
+  <script src="/js/shortcuts.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

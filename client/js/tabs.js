@@ -5,7 +5,6 @@ const Tabs = (() => {
 
   const tabBar = document.getElementById('tab-bar');
   const newTabBtn = document.getElementById('new-tab-btn');
-  const container = document.getElementById('terminal-container');
 
   function render() {
     // Remove existing tab elements (but keep the + button)
@@ -61,7 +60,6 @@ const Tabs = (() => {
       }
     } catch (err) {
       console.error('Failed to load sessions:', err);
-      // Create a fresh tab
       await createTab();
     }
   }
@@ -90,7 +88,7 @@ const Tabs = (() => {
     if (activeTabId === sessionId) return;
     activeTabId = sessionId;
     render();
-    TerminalManager.connect(sessionId, container);
+    TerminalManager.connect(sessionId);
   }
 
   async function closeTab(sessionId) {
@@ -108,10 +106,12 @@ const Tabs = (() => {
 
   function removeTab(sessionId) {
     tabs = tabs.filter((t) => t.id !== sessionId);
+    TerminalManager.destroyTerminal(sessionId);
 
     if (activeTabId === sessionId) {
       TerminalManager.disconnect();
       if (tabs.length > 0) {
+        activeTabId = null; // Reset so switchTab doesn't bail early
         switchTab(tabs[tabs.length - 1].id);
       } else {
         activeTabId = null;

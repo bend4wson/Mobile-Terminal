@@ -7,10 +7,13 @@ interface TerminalSession {
   createdAt: Date;
   lastActivity: Date;
   disconnectTimer?: ReturnType<typeof setTimeout>;
+  scrollbackBuffer: string;
+  bufferListener: pty.IDisposable;
 }
 
 const DISCONNECT_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const MAX_SESSIONS_PER_USER = 10;
+const BUFFER_MAX_SIZE = 100 * 1024; // 100KB scrollback buffer per session
 
 // Map<userId, Map<sessionId, TerminalSession>>
 const sessions = new Map<number, Map<string, TerminalSession>>();
@@ -46,10 +49,30 @@ export function createSession(userId: number): { id: string; title: string } {
     env: process.env as Record<string, string>,
   });
 
+  // Buffer all PTY output so we can replay on reconnect
+  let scrollbackBuffer = '';
+  const bufferListener = ptyProcess.onData((data: string) => {
+    scrollbackBuffer += data;
+    if (scrollbackBuffer.length > BUFFER_MAX_SIZE) {
+      scrollbackBuffer = scrollbackBuffer.slice(-BUFFER_MAX_SIZE);
+    }
+  });
+
   userSessions.set(sessionId, {
     pty: ptyProcess,
     createdAt: new Date(),
     lastActivity: new Date(),
+    scrollbackBuffer: '',
+    bufferListener,
+  });
+
+  // Keep scrollbackBuffer reference in sync via getter pattern
+  const session = userSessions.get(sessionId)!;
+  Object.defineProperty(session, 'scrollbackBuffer', {
+    get: () => scrollbackBuffer,
+    set: (v: string) => { scrollbackBuffer = v; },
+    enumerable: true,
+    configurable: true,
   });
 
   db.prepare('INSERT INTO sessions (id, user_id, title) VALUES (?, ?, ?)').run(sessionId, userId, title);
@@ -84,6 +107,7 @@ export function destroySession(userId: number, sessionId: string): boolean {
     clearTimeout(session.disconnectTimer);
   }
 
+  session.bufferListener.dispose();
   session.pty.kill();
   userSessions.delete(sessionId);
 
@@ -127,6 +151,7 @@ export function destroyAllSessions(userId: number): void {
     if (session.disconnectTimer) {
       clearTimeout(session.disconnectTimer);
     }
+    session.bufferListener.dispose();
     session.pty.kill();
 
     const db = getDb();
@@ -142,6 +167,7 @@ export function destroyAllSessionsOnShutdown(): void {
       if (session.disconnectTimer) {
         clearTimeout(session.disconnectTimer);
       }
+      session.bufferListener.dispose();
       session.pty.kill();
     }
   }

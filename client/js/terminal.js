@@ -1,10 +1,15 @@
 // Terminal module — xterm.js + WebSocket connection management
 const TerminalManager = (() => {
-  let currentTerm = null;
+  // Per-session terminal instances so switching tabs doesn't destroy them
+  const termInstances = {}; // { sessionId: { term, fitAddon, resizeObserver } }
   let currentWs = null;
   let currentSessionId = null;
   let reconnectTimer = null;
-  const RECONNECT_DELAY = 2000;
+  let reconnectAttempts = 0;
+  const RECONNECT_BASE_DELAY = 1000;
+  const RECONNECT_MAX_DELAY = 15000;
+
+  const container = document.getElementById('terminal-container');
 
   function getWsUrl(sessionId) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -12,7 +17,11 @@ const TerminalManager = (() => {
     return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}&sessionId=${encodeURIComponent(sessionId)}`;
   }
 
-  function createTerminal() {
+  function getOrCreateTerminal(sessionId) {
+    if (termInstances[sessionId]) {
+      return termInstances[sessionId];
+    }
+
     const term = new Terminal({
       fontSize: 14,
       fontFamily: '\'SF Mono\', \'Fira Code\', \'Consolas\', \'Courier New\', monospace',
@@ -24,6 +33,7 @@ const TerminalManager = (() => {
       },
       cursorBlink: true,
       allowProposedApi: true,
+      scrollback: 5000,
     });
 
     const fitAddon = new FitAddon.FitAddon();
@@ -31,84 +41,125 @@ const TerminalManager = (() => {
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
 
-    return { term, fitAddon };
+    termInstances[sessionId] = { term, fitAddon, resizeObserver: null };
+    return termInstances[sessionId];
   }
 
-  function connect(sessionId, container) {
-    disconnect();
-    currentSessionId = sessionId;
+  function attachToContainer(sessionId) {
+    const inst = termInstances[sessionId];
+    if (!inst) return;
 
-    // Clear container
-    container.innerHTML = '';
+    // Hide all other terminal elements
+    for (const el of container.children) {
+      el.style.display = 'none';
+    }
 
-    const { term, fitAddon } = createTerminal();
-    currentTerm = { term, fitAddon };
+    // Check if this terminal already has a DOM element in the container
+    let termEl = container.querySelector(`[data-session="${sessionId}"]`);
+    if (!termEl) {
+      termEl = document.createElement('div');
+      termEl.dataset.session = sessionId;
+      termEl.style.height = '100%';
+      container.appendChild(termEl);
+      inst.term.open(termEl);
+    }
 
-    term.open(container);
-    fitAddon.fit();
+    termEl.style.display = '';
+    inst.fitAddon.fit();
+
+    // Set up resize observer if not already
+    if (!inst.resizeObserver) {
+      inst.resizeObserver = new ResizeObserver(() => {
+        if (currentSessionId === sessionId) {
+          inst.fitAddon.fit();
+          sendResize(inst.fitAddon);
+        }
+      });
+      inst.resizeObserver.observe(container);
+    }
+
+    inst.term.focus();
+  }
+
+  function sendResize(fitAddon) {
+    const dims = fitAddon.proposeDimensions();
+    if (dims && currentWs && currentWs.readyState === WebSocket.OPEN) {
+      currentWs.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+    }
+  }
+
+  function connectWs(sessionId) {
+    // Close existing WebSocket without triggering full disconnect
+    if (currentWs) {
+      currentWs.onclose = null;
+      currentWs.onerror = null;
+      currentWs.close();
+      currentWs = null;
+    }
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    const inst = termInstances[sessionId];
+    if (!inst) return;
 
     const ws = new WebSocket(getWsUrl(sessionId));
     currentWs = ws;
 
     ws.onopen = () => {
+      reconnectAttempts = 0;
       setStatus(false);
-      // Send initial size
-      const dims = fitAddon.proposeDimensions();
-      if (dims) {
-        ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-      }
+      sendResize(inst.fitAddon);
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'output' && msg.data) {
-          term.write(msg.data);
+          inst.term.write(msg.data);
         }
       } catch {
-        // ignore malformed messages
+        // ignore
       }
     };
 
     ws.onclose = (event) => {
-      if (event.code === 4004) {
-        // Session not found — remove the tab
-        if (typeof Tabs !== 'undefined') {
-          Tabs.removeTab(sessionId);
-        }
+      if (event.code === 4000) {
+        // PTY process exited — leave the tab but show it's dead
         return;
       }
+      // For any other close (including 4004), just reconnect
+      // Don't remove tabs — the session may still exist on the server
       if (currentSessionId === sessionId) {
         setStatus(true);
-        scheduleReconnect(sessionId, container);
+        scheduleReconnect(sessionId);
       }
     };
 
     ws.onerror = () => {
-      // onclose will fire after this
+      // onclose will fire after
     };
 
     // Terminal input → WebSocket
-    term.onData((data) => {
+    // Remove old listener if any and attach fresh one
+    if (inst._inputDisposable) {
+      inst._inputDisposable.dispose();
+    }
+    inst._inputDisposable = inst.term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
+  }
 
-    // Handle resize
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      const dims = fitAddon.proposeDimensions();
-      if (dims && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-      }
-    });
-    resizeObserver.observe(container);
-
-    // Store observer for cleanup
-    currentTerm.resizeObserver = resizeObserver;
-
-    term.focus();
+  function connect(sessionId) {
+    currentSessionId = sessionId;
+    reconnectAttempts = 0;
+    getOrCreateTerminal(sessionId);
+    attachToContainer(sessionId);
+    connectWs(sessionId);
   }
 
   function disconnect() {
@@ -122,23 +173,31 @@ const TerminalManager = (() => {
       currentWs.close();
       currentWs = null;
     }
-    if (currentTerm) {
-      if (currentTerm.resizeObserver) {
-        currentTerm.resizeObserver.disconnect();
-      }
-      currentTerm.term.dispose();
-      currentTerm = null;
-    }
     currentSessionId = null;
   }
 
-  function scheduleReconnect(sessionId, container) {
+  function destroyTerminal(sessionId) {
+    const inst = termInstances[sessionId];
+    if (!inst) return;
+    if (inst._inputDisposable) inst._inputDisposable.dispose();
+    if (inst.resizeObserver) inst.resizeObserver.disconnect();
+    inst.term.dispose();
+    delete termInstances[sessionId];
+
+    // Remove the DOM element
+    const el = container.querySelector(`[data-session="${sessionId}"]`);
+    if (el) el.remove();
+  }
+
+  function scheduleReconnect(sessionId) {
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(1.5, reconnectAttempts), RECONNECT_MAX_DELAY);
+    reconnectAttempts++;
     reconnectTimer = setTimeout(() => {
       if (currentSessionId === sessionId) {
-        connect(sessionId, container);
+        connectWs(sessionId);
       }
-    }, RECONNECT_DELAY);
+    }, delay);
   }
 
   function sendInput(data) {
@@ -148,8 +207,8 @@ const TerminalManager = (() => {
   }
 
   function focusTerminal() {
-    if (currentTerm) {
-      currentTerm.term.focus();
+    if (currentSessionId && termInstances[currentSessionId]) {
+      termInstances[currentSessionId].term.focus();
     }
   }
 
@@ -160,5 +219,5 @@ const TerminalManager = (() => {
     }
   }
 
-  return { connect, disconnect, sendInput, focusTerminal };
+  return { connect, disconnect, destroyTerminal, sendInput, focusTerminal };
 })();

@@ -11,6 +11,8 @@ interface WsMessage {
   rows?: number;
 }
 
+const PING_INTERVAL = 25000; // 25 seconds
+
 export function setupWebSocket(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -55,6 +57,11 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
 
     const ptyProcess = session.pty;
 
+    // Replay scrollback buffer so the client sees previous output
+    if (session.scrollbackBuffer) {
+      ws.send(JSON.stringify({ type: 'output', data: session.scrollbackBuffer }));
+    }
+
     // PTY output → WebSocket
     const dataHandler = ptyProcess.onData((data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -86,18 +93,31 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
       }
     });
 
-    // Handle WebSocket close
-    ws.on('close', () => {
-      dataHandler.dispose();
-      exitHandler.dispose();
-      startDisconnectTimer(user.userId, sessionId);
-    });
+    // Ping/pong keepalive to detect dead connections on mobile
+    let alive = true;
+    ws.on('pong', () => { alive = true; });
 
-    ws.on('error', () => {
+    const pingTimer = setInterval(() => {
+      if (!alive) {
+        ws.terminate();
+        return;
+      }
+      alive = false;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      }
+    }, PING_INTERVAL);
+
+    // Cleanup on close
+    function cleanup() {
+      clearInterval(pingTimer);
       dataHandler.dispose();
       exitHandler.dispose();
       startDisconnectTimer(user.userId, sessionId);
-    });
+    }
+
+    ws.on('close', cleanup);
+    ws.on('error', cleanup);
   });
 
   return wss;

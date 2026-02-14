@@ -27,6 +27,14 @@ echo "  Server:  http://localhost:$PORT"
 echo "  Public:  https://$NGROK_DOMAIN"
 echo ""
 
+# Kill any existing process on the port
+EXISTING_PID=$(lsof -ti :"$PORT" 2>/dev/null || true)
+if [ -n "$EXISTING_PID" ]; then
+  echo "Port $PORT is in use (PID $EXISTING_PID). Killing it..."
+  kill "$EXISTING_PID" 2>/dev/null
+  sleep 1
+fi
+
 # Track child PIDs
 SERVER_PID=""
 NGROK_PID=""
@@ -59,7 +67,7 @@ sleep 2
 
 # Start ngrok
 echo "Starting ngrok tunnel..."
-ngrok http --domain="$NGROK_DOMAIN" "$PORT" --log=stdout &
+ngrok http --url="$NGROK_DOMAIN" "$PORT" --log=stdout &
 NGROK_PID=$!
 
 echo ""

@@ -37,7 +37,7 @@ if ! command -v ngrok &> /dev/null; then
     Darwin)
       if command -v brew &> /dev/null; then
         echo "Installing via Homebrew..."
-        brew install ngrok/ngrok/ngrok
+        arch -arm64 brew install ngrok/ngrok/ngrok 2>/dev/null || brew install ngrok/ngrok/ngrok
       else
         echo "Please install Homebrew first, then run: brew install ngrok/ngrok/ngrok"
         echo "Or download from: https://ngrok.com/download"

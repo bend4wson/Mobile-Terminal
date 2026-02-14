@@ -161,7 +161,24 @@ Vanilla HTML/CSS/JS served as static files. No build step required.
 - `manifest.json` — App name, icons, theme color, `display: standalone`
 - `sw.js` — Service worker for offline shell caching (cache app assets; terminal I/O obviously requires connectivity)
 
-### 7. Cloudflare Tunnel (`/scripts/`)
+### 7. Tunnel Options (`/scripts/`)
+
+Two tunnel options are available for exposing the server to the internet. Both provide HTTPS automatically with no port forwarding needed. They are completely independent and can coexist.
+
+#### Option A: ngrok (Free — Recommended for Getting Started)
+
+ngrok's free tier provides one permanent static domain per account (e.g., `something.ngrok-free.app`). The same URL persists across restarts, which is essential for PWA home screen installs.
+
+**Setup:** `npm run tunnel:setup` — interactive script that:
+1. Installs `ngrok` (if not present)
+2. Saves the user's authtoken from the ngrok dashboard
+3. Saves the user's free static domain to `.tunnel.env` (gitignored)
+
+**Usage:** `npm run tunnel` — starts both the Node server and ngrok tunnel, prints the public URL, and cleanly shuts down both on Ctrl+C.
+
+**Note:** ngrok's free tier shows an interstitial "Visit Site" page on first visit. Once the PWA is installed and the service worker caches the app shell, this doesn't appear on subsequent launches.
+
+#### Option B: Cloudflare Tunnel (Requires a Domain)
 
 A setup script (`setup-tunnel.sh`) automates:
 1. Installing `cloudflared` (if not present)
@@ -170,8 +187,6 @@ A setup script (`setup-tunnel.sh`) automates:
 4. Configuring the tunnel to point to `http://localhost:3000`
 5. Setting up DNS routing to a user-provided domain
 6. Optionally installing `cloudflared` as a system service
-
-This provides HTTPS automatically (Cloudflare handles TLS termination) with no port forwarding needed.
 
 ## Data Flow: Keystroke to Output
 

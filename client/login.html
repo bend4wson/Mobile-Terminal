@@ -12,10 +12,12 @@
   <div class="auth-container">
     <div class="auth-box" id="login-box">
       <h1>Terminal Mobile</h1>
+      <form novalidate>
       <div class="auth-error" id="login-error"></div>
       <input type="text" id="login-username" placeholder="Username" autocomplete="username" autocapitalize="none">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
-      <button id="login-btn">Log In</button>
+      <button type="button" id="login-btn">Log In</button>
+      </form>
       <div class="auth-toggle">
         No account? <a href="#" id="show-register">Register</a>
       </div>
@@ -23,10 +25,12 @@
 
     <div class="auth-box" id="register-box" style="display:none">
       <h1>Create Account</h1>
+      <form novalidate>
       <div class="auth-error" id="register-error"></div>
       <input type="text" id="register-username" placeholder="Username" autocomplete="username" autocapitalize="none">
       <input type="password" id="register-password" placeholder="Password (8+ characters)" autocomplete="new-password">
-      <button id="register-btn">Register</button>
+      <button type="button" id="register-btn">Register</button>
+      </form>
       <div class="auth-toggle">
         Have an account? <a href="#" id="show-login">Log in</a>
       </div>

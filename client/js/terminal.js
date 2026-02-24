@@ -45,6 +45,81 @@ const TerminalManager = (() => {
     return termInstances[sessionId];
   }
 
+  function setupTouchScroll(termEl) {
+    const viewport = termEl.querySelector('.xterm-viewport');
+    const screen = termEl.querySelector('.xterm-screen');
+    if (!viewport || !screen) return;
+
+    let startY = 0;
+    let lastY = 0;
+    let lastTime = 0;
+    let velocity = 0;
+    let momentumId = null;
+    let isScrolling = false;
+    const SCROLL_THRESHOLD = 10;
+
+    function stopMomentum() {
+      if (momentumId) {
+        cancelAnimationFrame(momentumId);
+        momentumId = null;
+      }
+    }
+
+    screen.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      stopMomentum();
+      startY = lastY = e.touches[0].clientY;
+      lastTime = Date.now();
+      velocity = 0;
+      isScrolling = false;
+    }, { passive: true });
+
+    screen.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) return;
+
+      const currentY = e.touches[0].clientY;
+      const totalDelta = Math.abs(startY - currentY);
+
+      // Don't scroll until finger has moved past threshold (allows taps through)
+      if (!isScrolling && totalDelta < SCROLL_THRESHOLD) return;
+
+      isScrolling = true;
+      e.preventDefault();
+
+      const deltaY = lastY - currentY;
+      const now = Date.now();
+      const dt = now - lastTime;
+
+      if (dt > 0) {
+        velocity = deltaY / dt;
+      }
+
+      viewport.scrollTop += deltaY;
+      lastY = currentY;
+      lastTime = now;
+    }, { passive: false });
+
+    screen.addEventListener('touchend', () => {
+      if (!isScrolling) return;
+
+      const friction = 0.95;
+
+      function momentumStep() {
+        if (Math.abs(velocity) < 0.01) {
+          momentumId = null;
+          return;
+        }
+        viewport.scrollTop += velocity * 16;
+        velocity *= friction;
+        momentumId = requestAnimationFrame(momentumStep);
+      }
+
+      if (Math.abs(velocity) > 0.1) {
+        momentumId = requestAnimationFrame(momentumStep);
+      }
+    }, { passive: true });
+  }
+
   function attachToContainer(sessionId) {
     const inst = termInstances[sessionId];
     if (!inst) return;
@@ -62,6 +137,7 @@ const TerminalManager = (() => {
       termEl.style.height = '100%';
       container.appendChild(termEl);
       inst.term.open(termEl);
+      setupTouchScroll(termEl);
     }
 
     termEl.style.display = '';

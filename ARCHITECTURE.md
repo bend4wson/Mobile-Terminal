@@ -151,10 +151,12 @@ Vanilla HTML/CSS/JS served as static files. No build step required.
 - `index.html` — Main terminal app (redirects to login if no valid JWT)
 
 **Key frontend modules:**
-- `js/terminal.js` — xterm.js initialization, WebSocket connection, input/output handling
-- `js/tabs.js` — Tab creation, switching, closing, tab bar rendering
+- `js/terminal.js` — xterm.js initialization, WebSocket connection, input/output handling. Supports multiple simultaneously visible/connected terminals for split pane layouts.
+- `js/split-pane.js` — Binary split tree layout engine. Manages pane layouts per tab, computes absolute positions, handles divider resize, drop zone rendering, and localStorage persistence.
+- `js/tabs.js` — Tab creation, switching, closing, tab bar rendering. Includes drag-and-drop (HTML5 drag + custom touch drag) for splitting panes by dragging tabs onto the terminal area.
 - `js/auth.js` — Login/register API calls, JWT storage (localStorage), redirect logic
-- `js/shortcuts.js` — Mobile shortcut bar event handlers
+- `js/shortcuts.js` — Mobile shortcut bar event handlers (routes input to focused pane)
+- `js/keyboard.js` — iOS virtual keyboard viewport handling and toggle button
 - `js/app.js` — Main entry point, orchestration
 
 **PWA assets:**

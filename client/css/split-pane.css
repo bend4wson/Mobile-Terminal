@@ -1,0 +1,173 @@
+/* split-pane.css — Split pane terminal layout */
+
+/* ─── Pane containers ─────────────────────────────────────────────────────── */
+
+.pane {
+  position: absolute;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.pane .pane-terminal {
+  width: 100%;
+  height: 100%;
+}
+
+.pane .pane-terminal .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+.pane.focused {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* ─── Dividers ────────────────────────────────────────────────────────────── */
+
+.pane-divider {
+  position: absolute;
+  z-index: 10;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+
+/* Visible line + larger invisible touch hit area via pseudo-element */
+.pane-divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Horizontal split — divider is a vertical line between left/right panes */
+.pane-divider[data-direction='horizontal']::before {
+  width: 16px;
+  height: 100%;
+}
+
+/* Vertical split — divider is a horizontal line between top/bottom panes */
+.pane-divider[data-direction='vertical']::before {
+  width: 100%;
+  height: 16px;
+}
+
+.pane-divider:hover,
+.pane-divider:active {
+  background: var(--accent);
+}
+
+/* ─── Drop zone overlays ──────────────────────────────────────────────────── */
+
+.drop-zone {
+  position: absolute;
+  z-index: 20;
+  display: none;
+  pointer-events: none;
+  background: transparent;
+  transition: background 0.1s ease;
+}
+
+/* Drop zones are created dynamically by split-pane.js inside each pane */
+.pane-drop-zone {
+  position: absolute;
+  z-index: 20;
+  pointer-events: all;
+  background: transparent;
+  border-radius: var(--radius);
+  transition: background 0.1s ease;
+}
+
+.pane-drop-zone.active {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+/* ─── Pane close button ───────────────────────────────────────────────────── */
+
+.pane-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  /* Ensure minimum 44px touch target via padding trick without affecting visual size */
+  padding: 0;
+}
+
+/* Expand the tap target without growing the visual element */
+.pane-close::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+}
+
+.pane:hover .pane-close,
+.pane.focused .pane-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pane-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.pane-close:active {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* On touch devices, always show close button on focused pane */
+@media (pointer: coarse) {
+  .pane.focused .pane-close {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* ─── Drag ghost ──────────────────────────────────────────────────────────── */
+
+.tab-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── Responsive — phones ─────────────────────────────────────────────────── */
+
+/* On narrow screens, suppress horizontal split drop zones so users are
+   guided toward vertical (top/bottom) splits only */
+@media (max-width: 499px) {
+  .pane-drop-zone--left,
+  .pane-drop-zone--right {
+    display: none !important;
+  }
+}

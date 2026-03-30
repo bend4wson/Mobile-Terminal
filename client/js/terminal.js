@@ -1,15 +1,11 @@
 // Terminal module — xterm.js + WebSocket connection management
+// Supports multiple simultaneous visible terminals for split pane layouts
 const TerminalManager = (() => {
-  // Per-session terminal instances so switching tabs doesn't destroy them
-  const termInstances = {}; // { sessionId: { term, fitAddon, resizeObserver } }
-  let currentWs = null;
-  let currentSessionId = null;
-  let reconnectTimer = null;
-  let reconnectAttempts = 0;
+  const termInstances = {}; // { sessionId: { term, fitAddon, ws, resizeObserver, _inputDisposable } }
+  let focusedSessionId = null;
+  const reconnectState = {}; // { sessionId: { timer, attempts } }
   const RECONNECT_BASE_DELAY = 1000;
   const RECONNECT_MAX_DELAY = 15000;
-
-  const container = document.getElementById('terminal-container');
 
   function getWsUrl(sessionId) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -17,10 +13,8 @@ const TerminalManager = (() => {
     return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}&sessionId=${encodeURIComponent(sessionId)}`;
   }
 
-  function getOrCreateTerminal(sessionId) {
-    if (termInstances[sessionId]) {
-      return termInstances[sessionId];
-    }
+  function createTerminal(sessionId) {
+    if (termInstances[sessionId]) return termInstances[sessionId];
 
     const term = new Terminal({
       fontSize: 14,
@@ -41,7 +35,7 @@ const TerminalManager = (() => {
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
 
-    termInstances[sessionId] = { term, fitAddon, resizeObserver: null };
+    termInstances[sessionId] = { term, fitAddon, ws: null, resizeObserver: null, _inputDisposable: null };
     return termInstances[sessionId];
   }
 
@@ -76,24 +70,15 @@ const TerminalManager = (() => {
 
     screen.addEventListener('touchmove', (e) => {
       if (e.touches.length !== 1) return;
-
       const currentY = e.touches[0].clientY;
       const totalDelta = Math.abs(startY - currentY);
-
-      // Don't scroll until finger has moved past threshold (allows taps through)
       if (!isScrolling && totalDelta < SCROLL_THRESHOLD) return;
-
       isScrolling = true;
       e.preventDefault();
-
       const deltaY = lastY - currentY;
       const now = Date.now();
       const dt = now - lastTime;
-
-      if (dt > 0) {
-        velocity = deltaY / dt;
-      }
-
+      if (dt > 0) velocity = deltaY / dt;
       viewport.scrollTop += deltaY;
       lastY = currentY;
       lastTime = now;
@@ -101,93 +86,84 @@ const TerminalManager = (() => {
 
     screen.addEventListener('touchend', () => {
       if (!isScrolling) return;
-
       const friction = 0.95;
-
       function momentumStep() {
-        if (Math.abs(velocity) < 0.01) {
-          momentumId = null;
-          return;
-        }
+        if (Math.abs(velocity) < 0.01) { momentumId = null; return; }
         viewport.scrollTop += velocity * 16;
         velocity *= friction;
         momentumId = requestAnimationFrame(momentumStep);
       }
-
       if (Math.abs(velocity) > 0.1) {
         momentumId = requestAnimationFrame(momentumStep);
       }
     }, { passive: true });
   }
 
-  function attachToContainer(sessionId) {
-    const inst = termInstances[sessionId];
-    if (!inst) return;
+  // Mount a terminal into a specific DOM element (e.g. .pane-terminal)
+  function mountTerminal(sessionId, mountEl) {
+    const inst = createTerminal(sessionId);
 
-    // Hide all other terminal elements
-    for (const el of container.children) {
-      el.style.display = 'none';
+    // Already mounted here
+    if (mountEl.querySelector('.xterm')) {
+      inst.fitAddon.fit();
+      return;
     }
 
-    // Check if this terminal already has a DOM element in the container
-    let termEl = container.querySelector(`[data-session="${sessionId}"]`);
-    if (!termEl) {
-      termEl = document.createElement('div');
-      termEl.dataset.session = sessionId;
-      termEl.style.height = '100%';
-      container.appendChild(termEl);
-      inst.term.open(termEl);
-      setupTouchScroll(termEl);
+    // If mounted elsewhere, move the xterm element
+    const existingEl = document.querySelector(`[data-terminal-session="${sessionId}"]`);
+    if (existingEl && existingEl !== mountEl) {
+      // xterm is already open, just move the DOM
+      while (existingEl.firstChild) {
+        mountEl.appendChild(existingEl.firstChild);
+      }
+    } else if (!existingEl) {
+      // First mount — open xterm
+      mountEl.dataset.terminalSession = sessionId;
+      inst.term.open(mountEl);
+      setupTouchScroll(mountEl);
     }
 
-    termEl.style.display = '';
+    mountEl.dataset.terminalSession = sessionId;
     inst.fitAddon.fit();
 
-    // Set up resize observer if not already
-    if (!inst.resizeObserver) {
-      inst.resizeObserver = new ResizeObserver(() => {
-        if (currentSessionId === sessionId) {
-          inst.fitAddon.fit();
-          sendResize(inst.fitAddon);
-        }
-      });
-      inst.resizeObserver.observe(container);
-    }
-
-    inst.term.focus();
+    // Resize observer per pane
+    if (inst.resizeObserver) inst.resizeObserver.disconnect();
+    inst.resizeObserver = new ResizeObserver(() => {
+      inst.fitAddon.fit();
+      sendResize(sessionId);
+    });
+    inst.resizeObserver.observe(mountEl);
   }
 
-  function sendResize(fitAddon) {
-    const dims = fitAddon.proposeDimensions();
-    if (dims && currentWs && currentWs.readyState === WebSocket.OPEN) {
-      currentWs.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-    }
-  }
-
-  function connectWs(sessionId) {
-    // Close existing WebSocket without triggering full disconnect
-    if (currentWs) {
-      currentWs.onclose = null;
-      currentWs.onerror = null;
-      currentWs.close();
-      currentWs = null;
-    }
-
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-
+  function sendResize(sessionId) {
     const inst = termInstances[sessionId];
     if (!inst) return;
+    const dims = inst.fitAddon.proposeDimensions();
+    if (dims && inst.ws && inst.ws.readyState === WebSocket.OPEN) {
+      inst.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+    }
+  }
+
+  function connectSession(sessionId) {
+    const inst = createTerminal(sessionId);
+
+    // Close existing WS for this session
+    if (inst.ws) {
+      inst.ws.onclose = null;
+      inst.ws.onerror = null;
+      inst.ws.close();
+      inst.ws = null;
+    }
+
+    clearReconnect(sessionId);
 
     const ws = new WebSocket(getWsUrl(sessionId));
-    currentWs = ws;
+    inst.ws = ws;
 
     ws.onopen = () => {
-      reconnectAttempts = 0;
+      clearReconnect(sessionId);
       setStatus(false);
-      sendResize(inst.fitAddon);
+      sendResize(sessionId);
     };
 
     ws.onmessage = (event) => {
@@ -196,33 +172,19 @@ const TerminalManager = (() => {
         if (msg.type === 'output' && msg.data) {
           inst.term.write(msg.data);
         }
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
 
     ws.onclose = (event) => {
-      if (event.code === 4000) {
-        // PTY process exited — leave the tab but show it's dead
-        return;
-      }
-      // For any other close (including 4004), just reconnect
-      // Don't remove tabs — the session may still exist on the server
-      if (currentSessionId === sessionId) {
-        setStatus(true);
-        scheduleReconnect(sessionId);
-      }
+      if (event.code === 4000) return; // PTY exited
+      setStatus(true);
+      scheduleReconnect(sessionId);
     };
 
-    ws.onerror = () => {
-      // onclose will fire after
-    };
+    ws.onerror = () => {};
 
-    // Terminal input → WebSocket
-    // Remove old listener if any and attach fresh one
-    if (inst._inputDisposable) {
-      inst._inputDisposable.dispose();
-    }
+    // Terminal input -> WS
+    if (inst._inputDisposable) inst._inputDisposable.dispose();
     inst._inputDisposable = inst.term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
@@ -230,29 +192,26 @@ const TerminalManager = (() => {
     });
   }
 
-  function connect(sessionId) {
-    currentSessionId = sessionId;
-    reconnectAttempts = 0;
-    getOrCreateTerminal(sessionId);
-    attachToContainer(sessionId);
-    connectWs(sessionId);
+  function disconnectSession(sessionId) {
+    clearReconnect(sessionId);
+    const inst = termInstances[sessionId];
+    if (!inst) return;
+    if (inst.ws) {
+      inst.ws.onclose = null;
+      inst.ws.onerror = null;
+      inst.ws.close();
+      inst.ws = null;
+    }
   }
 
-  function disconnect() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+  function disconnectAll() {
+    for (const sid of Object.keys(termInstances)) {
+      disconnectSession(sid);
     }
-    if (currentWs) {
-      currentWs.onclose = null;
-      currentWs.onerror = null;
-      currentWs.close();
-      currentWs = null;
-    }
-    currentSessionId = null;
   }
 
   function destroyTerminal(sessionId) {
+    disconnectSession(sessionId);
     const inst = termInstances[sessionId];
     if (!inst) return;
     if (inst._inputDisposable) inst._inputDisposable.dispose();
@@ -260,40 +219,91 @@ const TerminalManager = (() => {
     inst.term.dispose();
     delete termInstances[sessionId];
 
-    // Remove the DOM element
-    const el = container.querySelector(`[data-session="${sessionId}"]`);
-    if (el) el.remove();
+    // Remove any mount points
+    const el = document.querySelector(`[data-terminal-session="${sessionId}"]`);
+    if (el) {
+      el.innerHTML = '';
+      delete el.dataset.terminalSession;
+    }
+  }
+
+  function clearReconnect(sessionId) {
+    const state = reconnectState[sessionId];
+    if (state && state.timer) {
+      clearTimeout(state.timer);
+    }
+    delete reconnectState[sessionId];
   }
 
   function scheduleReconnect(sessionId) {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(1.5, reconnectAttempts), RECONNECT_MAX_DELAY);
-    reconnectAttempts++;
-    reconnectTimer = setTimeout(() => {
-      if (currentSessionId === sessionId) {
-        connectWs(sessionId);
-      }
+    if (!reconnectState[sessionId]) {
+      reconnectState[sessionId] = { timer: null, attempts: 0 };
+    }
+    const state = reconnectState[sessionId];
+    if (state.timer) clearTimeout(state.timer);
+    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(1.5, state.attempts), RECONNECT_MAX_DELAY);
+    state.attempts++;
+    state.timer = setTimeout(() => {
+      connectSession(sessionId);
     }, delay);
   }
 
   function sendInput(data) {
-    if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-      currentWs.send(JSON.stringify({ type: 'input', data }));
+    const sid = focusedSessionId || SplitPane.getFocusedSessionId();
+    const inst = sid && termInstances[sid];
+    if (inst && inst.ws && inst.ws.readyState === WebSocket.OPEN) {
+      inst.ws.send(JSON.stringify({ type: 'input', data }));
     }
   }
 
+  function setFocused(sessionId) {
+    focusedSessionId = sessionId;
+    const inst = termInstances[sessionId];
+    if (inst) inst.term.focus();
+  }
+
   function focusTerminal() {
-    if (currentSessionId && termInstances[currentSessionId]) {
-      termInstances[currentSessionId].term.focus();
+    const sid = focusedSessionId || SplitPane.getFocusedSessionId();
+    if (sid && termInstances[sid]) {
+      termInstances[sid].term.focus();
+    }
+  }
+
+  function refitAll() {
+    for (const inst of Object.values(termInstances)) {
+      inst.fitAddon.fit();
     }
   }
 
   function setStatus(disconnected) {
     const el = document.getElementById('status-bar');
-    if (el) {
-      el.classList.toggle('visible', disconnected);
-    }
+    if (el) el.classList.toggle('visible', disconnected);
   }
 
-  return { connect, disconnect, destroyTerminal, sendInput, focusTerminal };
+  // Legacy single-session API (used by old tab switching — still works for single pane)
+  function connect(sessionId) {
+    focusedSessionId = sessionId;
+    createTerminal(sessionId);
+    connectSession(sessionId);
+  }
+
+  function disconnect() {
+    disconnectAll();
+    focusedSessionId = null;
+  }
+
+  return {
+    connect,
+    disconnect,
+    destroyTerminal,
+    sendInput,
+    focusTerminal,
+    createTerminal,
+    mountTerminal,
+    connectSession,
+    disconnectSession,
+    disconnectAll,
+    setFocused,
+    refitAll,
+  };
 })();

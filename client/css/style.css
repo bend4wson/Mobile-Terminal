@@ -205,10 +205,7 @@ body.keyboard-open .app {
   touch-action: none;
 }
 
-.terminal-container .xterm {
-  height: 100%;
-  padding: 4px;
-}
+/* xterm styling is now in split-pane.css via .pane-terminal .xterm */
 
 /* ---- Shortcut Bar ---- */
 

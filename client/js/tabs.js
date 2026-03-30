@@ -194,12 +194,6 @@ const Tabs = (() => {
     const direction = directionMap[zone];
     if (!direction) return;
 
-    // Check if the dragged session is already in the layout
-    const layoutSessions = SplitPane.getSessionIds(activeTabId);
-    const alreadyInLayout = layoutSessions.includes(dragSessionId);
-
-    if (alreadyInLayout && dragSessionId === targetSessionId) return;
-
     // Create a new session for the split
     const newSession = await createSession();
     if (!newSession) return;

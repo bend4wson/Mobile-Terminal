@@ -25,6 +25,11 @@ html, body {
   touch-action: manipulation;
 }
 
+/* Use visual viewport height when keyboard is open (set by JS) */
+body.keyboard-open .app {
+  height: calc(var(--vvh, 100%) * 1px);
+}
+
 /* ---- Auth Pages ---- */
 
 .auth-container {
@@ -215,6 +220,33 @@ html, body {
   background: var(--surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.keyboard-toggle {
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.keyboard-toggle:active {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.keyboard-toggle.keyboard-hidden {
+  color: var(--text-muted);
+  border-color: var(--text-muted);
 }
 
 .shortcut-row {
